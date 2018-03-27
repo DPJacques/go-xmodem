@@ -109,9 +109,8 @@ func sendBlock(c io.ReadWriter, block uint8, data []byte) error {
 	return nil
 }
 
-type sendCallback func(currentBlock, totalBlock uint)
 
-func ModemSend(c io.ReadWriter, data []byte, cb *sendCallback) error {
+func ModemSend(c io.ReadWriter, data []byte, cb *func(currentBlock, totalBlock uint)) error {
 	oBuffer := make([]byte, 1)
 
 	if _, err := c.Read(oBuffer); err != nil {
