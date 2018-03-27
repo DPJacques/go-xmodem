@@ -2,8 +2,10 @@ package xmodem
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log"
+	"time"
 )
 
 const SOH byte = 0x01
@@ -107,42 +109,54 @@ func sendBlock(c io.ReadWriter, block uint8, data []byte) error {
 	return nil
 }
 
-func ModemSend(c io.ReadWriter, data []byte) error {
+type sendCallback func(currentBlock, totalBlock uint)
+
+func ModemSend(c io.ReadWriter, data []byte, cb *sendCallback) error {
 	oBuffer := make([]byte, 1)
 
 	if _, err := c.Read(oBuffer); err != nil {
 		return err
 	}
+	if oBuffer[0] != POLL {
+		return fmt.Errorf("xmodem expected %q in read buffer, found: %s", POLL, oBuffer[0])
+	}
 
-	if oBuffer[0] == POLL {
-		var blocks uint8 = uint8(len(data) / LONG_PACKET_PAYLOAD_LEN)
-		if len(data) > int(int(blocks)*int(LONG_PACKET_PAYLOAD_LEN)) {
-			blocks++
+	var blocks = uint(len(data) / LONG_PACKET_PAYLOAD_LEN)
+	if len(data) > int(int(blocks)*int(LONG_PACKET_PAYLOAD_LEN)) {
+		blocks++
+	}
+
+	failed := 0
+	var currentBlock uint = 0
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for currentBlock < blocks && failed < 10 {
+		select {
+		case <-tick.C:
+			if cb != nil {
+				(*cb)(currentBlock, blocks)
+			}
+		default:
+		}
+		if int(int(currentBlock+1)*int(LONG_PACKET_PAYLOAD_LEN)) > len(data) {
+			sendBlock(c, uint8((currentBlock+1)%256), data[int(currentBlock)*int(LONG_PACKET_PAYLOAD_LEN):])
+		} else {
+			sendBlock(c, uint8((currentBlock+1)%256), data[int(currentBlock)*int(LONG_PACKET_PAYLOAD_LEN):(int(currentBlock)+1)*int(LONG_PACKET_PAYLOAD_LEN)])
 		}
 
-		failed := 0
-		var currentBlock uint8 = 0
-		for currentBlock < blocks && failed < 10 {
-			if int(int(currentBlock+1)*int(LONG_PACKET_PAYLOAD_LEN)) > len(data) {
-				sendBlock(c, currentBlock+1, data[int(currentBlock)*int(LONG_PACKET_PAYLOAD_LEN):])
-			} else {
-				sendBlock(c, currentBlock+1, data[int(currentBlock)*int(LONG_PACKET_PAYLOAD_LEN):(int(currentBlock)+1)*int(LONG_PACKET_PAYLOAD_LEN)])
-			}
-
-			if _, err := c.Read(oBuffer); err != nil {
-				return err
-			}
-
-			if oBuffer[0] == ACK {
-				currentBlock++
-			} else {
-				failed++
-			}
-		}
-
-		if _, err := c.Write([]byte{EOT}); err != nil {
+		if _, err := c.Read(oBuffer); err != nil {
 			return err
 		}
+
+		if oBuffer[0] == ACK {
+			currentBlock++
+		} else {
+			failed++
+		}
+	}
+
+	if _, err := c.Write([]byte{EOT}); err != nil {
+		return err
 	}
 
 	return nil
