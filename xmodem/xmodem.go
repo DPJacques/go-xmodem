@@ -18,6 +18,8 @@ const POLL byte = 0x43
 const SHORT_PACKET_PAYLOAD_LEN = 128
 const LONG_PACKET_PAYLOAD_LEN = 1024
 
+const MAX_SEND_BLOCK_FAILURES = 10
+
 func CRC16(data []byte) uint16 {
 	var u16CRC uint16 = 0
 
@@ -109,7 +111,6 @@ func sendBlock(c io.ReadWriter, block uint8, data []byte) error {
 	return nil
 }
 
-
 func ModemSend(c io.ReadWriter, data []byte, cb *func(currentBlock, totalBlock uint)) error {
 	oBuffer := make([]byte, 1)
 
@@ -129,7 +130,7 @@ func ModemSend(c io.ReadWriter, data []byte, cb *func(currentBlock, totalBlock u
 	var currentBlock uint = 0
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
-	for currentBlock < blocks && failed < 10 {
+	for currentBlock < blocks {
 		select {
 		case <-tick.C:
 			if cb != nil {
@@ -151,6 +152,9 @@ func ModemSend(c io.ReadWriter, data []byte, cb *func(currentBlock, totalBlock u
 			currentBlock++
 		} else {
 			failed++
+			if failed >= MAX_SEND_BLOCK_FAILURES {
+				return fmt.Errorf("too many send-block failures (%v)", failed)
+			}
 		}
 	}
 
